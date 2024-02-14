@@ -1,0 +1,49 @@
+mod common;
+mod filters;
+mod proxy;
+
+use anyhow::Context;
+
+/// udp-obfuscat client and server
+#[derive(Debug, clap::Parser)]
+#[clap(version, about, long_about = None)]
+struct Args {
+    /// Where to bind listening client UDP socket
+    #[clap(short, long)]
+    local_address: std::net::SocketAddr,
+
+    /// Address of an udp-obfuscat server
+    #[clap(short, long)]
+    remote_address: std::net::SocketAddr,
+
+    /// Base64-encoded key for a Xor filter
+    #[clap(short, long)]
+    xor_key: String,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    env_logger::init();
+    use clap::Parser;
+    let args = Args::parse();
+
+    use base64::prelude::*;
+    let xor_key = BASE64_STANDARD
+        .decode(args.xor_key.as_bytes())
+        .context("Failed to convert xor_key from base64")?;
+    let filter = crate::filters::Xor::with_key(xor_key);
+    let udp_proxy = std::sync::Arc::new(
+        crate::proxy::UdpProxy::new(args.local_address, args.remote_address, Box::new(filter))
+            .await?,
+    );
+
+    log::debug!(
+        "Listener bound to {}/udp and connected to {}/udp",
+        udp_proxy.get_local_address(),
+        udp_proxy.get_remote_address()
+    );
+
+    udp_proxy.run().await?;
+
+    Ok(())
+}

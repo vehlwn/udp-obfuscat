@@ -1,0 +1,24 @@
+digraph
+{
+    rankdir = TB
+
+    subgraph cluster_a
+    {
+        label = "Peer A network"
+
+        peer_a [label = "Peer A"];
+        udp_obfuscat_client [label = "udp-obfuscat client"]
+
+        peer_a -> udp_obfuscat_client [label = "127.0.0.1:5050"]
+    }
+    subgraph cluster_b
+    {
+        label = "Peer B network"
+
+        peer_b
+        udp_obfuscat_server [label = "udp-obfuscat server"]
+
+        udp_obfuscat_server -> peer_b [label = "127.0.0.1:6060"];
+    }
+    udp_obfuscat_client -> udp_obfuscat_server [label = "192.0.2.1:5050"]
+}
