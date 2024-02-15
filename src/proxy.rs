@@ -1,10 +1,57 @@
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 
-type ConnTrackMap = std::collections::HashMap<SocketAddr, Arc<tokio::net::UdpSocket>>;
+struct ConntrackValue {
+    client_sock: tokio::net::UdpSocket,
+    num_packets_in: AtomicI32,
+    num_packets_out: AtomicI32,
+    has_data_in: tokio::sync::Notify,
+}
+impl ConntrackValue {
+    fn new(client_sock: tokio::net::UdpSocket) -> Self {
+        Self {
+            client_sock,
+            num_packets_in: AtomicI32::new(0),
+            num_packets_out: AtomicI32::new(0),
+            has_data_in: tokio::sync::Notify::new(),
+        }
+    }
 
+    fn inc_packets_in(&self) {
+        let old = self.num_packets_in.load(Ordering::Relaxed);
+        let new = old.saturating_add(1);
+        self.num_packets_in.store(new, Ordering::Relaxed);
+        self.has_data_in.notify_one();
+    }
+
+    fn inc_packets_out(&self) {
+        let old = self.num_packets_out.load(Ordering::Relaxed);
+        let new = old.saturating_add(1);
+        self.num_packets_out.store(new, Ordering::Relaxed);
+    }
+
+    fn get_num_packets_in(&self) -> i32 {
+        self.num_packets_in.load(Ordering::Relaxed)
+    }
+    fn get_num_packets_out(&self) -> i32 {
+        self.num_packets_out.load(Ordering::Relaxed)
+    }
+
+    fn is_assured(&self) -> bool {
+        let a = self.get_num_packets_in();
+        let b = self.get_num_packets_out();
+        let min = a.min(b);
+        let max = a.max(b);
+        min >= 1 && max >= 2
+    }
+}
+
+type ConnTrackMap = std::collections::HashMap<SocketAddr, Arc<ConntrackValue>>;
+
+const UDP_TIMEOUT: u64 = 30;
 const UDP_TIMEOUT_STREAM: u64 = 120;
 
 pub struct UdpProxy {
@@ -48,7 +95,7 @@ impl UdpProxy {
 
     async fn reply_loop(
         &self,
-        proxy_conn: Arc<tokio::net::UdpSocket>,
+        ct_value: Arc<ConntrackValue>,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<()> {
         scopeguard::defer! {
@@ -57,23 +104,63 @@ impl UdpProxy {
             conntrack_lock.remove(&peer_addr);
         }
         let mut read_buf = crate::common::datagram_buffer();
+        let mut timeout = UDP_TIMEOUT;
         loop {
-            let recv_len = match tokio::time::timeout(
-                std::time::Duration::from_secs(UDP_TIMEOUT_STREAM),
-                proxy_conn.recv(read_buf.as_mut()),
-            )
-            .await
-            {
-                Ok(recv_result) => recv_result
-                    .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?,
-                Err(_) => break,
-            };
-            self.listener
-                .send_to(&read_buf[..recv_len], peer_addr)
-                .await
-                .context("listener.send_to failed")?;
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
+                    break;
+                }
+                recv_result = ct_value.client_sock.recv(read_buf.as_mut()) => {
+                    let recv_len = recv_result
+                        .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
+                    ct_value.inc_packets_out();
+                    self.listener
+                        .send_to(&read_buf[..recv_len], peer_addr)
+                        .await
+                        .context("listener.send_to failed")?;
+                }
+                _ = ct_value.has_data_in.notified() => {
+                    if ct_value.is_assured() {
+                        timeout = UDP_TIMEOUT_STREAM;
+                    }
+                }
+            }
         }
         return Ok(());
+    }
+
+    async fn get_or_insert_conntrack_entry(
+        self: &Arc<Self>,
+        peer_addr: SocketAddr,
+    ) -> anyhow::Result<Arc<ConntrackValue>> {
+        let mut conntrack_lock = self.conntrack_table.lock().unwrap();
+        use std::collections::hash_map::Entry;
+        match conntrack_lock.entry(peer_addr) {
+            Entry::Vacant(v) => {
+                let client_sock = connect_udp_socket(self.remote_address)
+                    .await
+                    .context("Failed to create client UDP socket")?;
+                let ct_value = Arc::new(ConntrackValue::new(client_sock));
+
+                log::debug!(
+                    "Creating conntrack key {peer_addr} -> {}",
+                    self.remote_address
+                );
+                v.insert(Arc::clone(&ct_value));
+
+                let ct_value_ = Arc::clone(&ct_value);
+                let self_ = Arc::clone(&self);
+                tokio::spawn(async move {
+                    if let Err(e) = self_.reply_loop(ct_value_, peer_addr).await {
+                        log::error!("reply_loop failed: {e}");
+                    }
+                });
+                return Ok(ct_value);
+            }
+            Entry::Occupied(o) => {
+                return Ok(o.get().clone());
+            }
+        }
     }
 
     pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
@@ -85,37 +172,12 @@ impl UdpProxy {
                 .await
                 .context("listener.recv_from failed")?;
 
-            let proxy_conn = {
-                let mut conntrack_lock = self.conntrack_table.lock().unwrap();
-                use std::collections::hash_map::Entry;
-                match conntrack_lock.entry(peer_addr) {
-                    Entry::Vacant(v) => {
-                        let client_sock = connect_udp_socket(self.remote_address)
-                            .await
-                            .context("Failed to create client UDP socket")?;
-                        let client_sock = Arc::new(client_sock);
+            let ct_value = self.get_or_insert_conntrack_entry(peer_addr).await?;
+            ct_value.inc_packets_in();
 
-                        log::debug!(
-                            "Creating conntrack key {peer_addr} -> {}",
-                            self.remote_address
-                        );
-                        v.insert(client_sock.clone());
-
-                        let client_sock_ = Arc::clone(&client_sock);
-                        let self_ = Arc::clone(&self);
-                        tokio::spawn(async move {
-                            if let Err(e) = self_.reply_loop(client_sock_, peer_addr).await {
-                                log::error!("reply_loop failed: {e}");
-                            }
-                        });
-                        client_sock
-                    }
-                    Entry::Occupied(o) => o.get().clone(),
-                }
-            };
             let read_buf = &mut read_buf[..recv_len];
             self.packet_transformer.transform(read_buf);
-            match proxy_conn.send(read_buf).await {
+            match ct_value.client_sock.send(read_buf).await {
                 Ok(send_len) => {
                     if send_len != recv_len {
                         log::error!(
