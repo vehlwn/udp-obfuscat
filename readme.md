@@ -19,6 +19,12 @@ Options:
 
 ## Examples
 
+You can generate xor-key with openssl:
+
+```bash
+openssl rand -base64 16
+```
+
 ### Client
 
 ```bash
