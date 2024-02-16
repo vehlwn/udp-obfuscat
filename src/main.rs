@@ -8,6 +8,10 @@ use anyhow::Context;
 #[derive(Debug, clap::Parser)]
 #[clap(version, about, long_about = None)]
 struct Args {
+    /// Disable timestamps in log messages. By default they are enabled
+    #[clap(short, long, env)]
+    disable_timestamps: bool,
+
     /// Where to bind listening client UDP socket
     #[clap(short, long, env)]
     local_address: std::net::SocketAddr,
@@ -23,9 +27,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
     use clap::Parser;
     let args = Args::parse();
+
+    let mut log_builder = env_logger::builder();
+    if args.disable_timestamps {
+        log_builder.format_timestamp(None);
+    }
+    log_builder.init();
 
     use base64::prelude::*;
     let xor_key = BASE64_STANDARD
