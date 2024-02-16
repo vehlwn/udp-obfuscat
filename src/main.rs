@@ -9,15 +9,15 @@ use anyhow::Context;
 #[clap(version, about, long_about = None)]
 struct Args {
     /// Where to bind listening client UDP socket
-    #[clap(short, long)]
+    #[clap(short, long, env)]
     local_address: std::net::SocketAddr,
 
     /// Address of an udp-obfuscat server
-    #[clap(short, long)]
+    #[clap(short, long, env)]
     remote_address: std::net::SocketAddr,
 
     /// Base64-encoded key for a Xor filter
-    #[clap(short, long)]
+    #[clap(short, long, env)]
     xor_key: String,
 }
 
@@ -37,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
             .await?,
     );
 
-    log::debug!(
+    log::info!(
         "Listener bound to {}/udp and connected to {}/udp",
         udp_proxy.get_local_address(),
         udp_proxy.get_remote_address()
