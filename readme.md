@@ -5,8 +5,6 @@ This is an UDP proxy with a simple xor cipher obfuscation in Rust.
 ## Help
 
 ```bash
-UDP proxy with obfuscation
-
 Usage: udp-obfuscat [OPTIONS] --local-address <LOCAL_ADDRESS> --remote-address <REMOTE_ADDRESS> --xor-key <XOR_KEY>
 
 Options:
@@ -15,7 +13,7 @@ Options:
   -l, --local-address <LOCAL_ADDRESS>
           Where to bind listening client UDP socket [env: LOCAL_ADDRESS=]
   -r, --remote-address <REMOTE_ADDRESS>
-          Address of an udp-obfuscat server [env: REMOTE_ADDRESS=]
+          Address of an udp-obfuscat server in client mode or UDP upstream in server mode [env: REMOTE_ADDRESS=]
   -x, --xor-key <XOR_KEY>
           Base64-encoded key for a Xor filter [env: XOR_KEY=]
   -h, --help
