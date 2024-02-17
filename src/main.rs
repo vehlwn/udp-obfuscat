@@ -16,7 +16,7 @@ struct Args {
     #[clap(short, long, env)]
     local_address: std::net::SocketAddr,
 
-    /// Address of an udp-obfuscat server
+    /// Address of an udp-obfuscat server in client mode or UDP upstream in server mode
     #[clap(short, long, env)]
     remote_address: std::net::SocketAddr,
 
