@@ -35,16 +35,6 @@ async fn main() -> anyhow::Result<()> {
     log_builder.init();
     log::debug!("{config:?}");
 
-    if let Some(user) = config.user {
-        let context = || format!("Failed to get user info for user '{user}'");
-        let user = nix::unistd::User::from_name(&user)
-            .with_context(context)?
-            .with_context(context)?;
-        if nix::unistd::Uid::effective().is_root() && !user.uid.is_root() {
-            drop_root(user).context("drop_root failed")?;
-        }
-    }
-
     use base64::prelude::*;
     let xor_key = BASE64_STANDARD
         .decode(config.xor_key.as_bytes())
@@ -58,6 +48,16 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?,
     );
+
+    if let Some(user) = config.user {
+        let context = || format!("Failed to get user info for user '{user}'");
+        let user = nix::unistd::User::from_name(&user)
+            .with_context(context)?
+            .with_context(context)?;
+        if nix::unistd::Uid::effective().is_root() && !user.uid.is_root() {
+            drop_root(user).context("drop_root failed")?;
+        }
+    }
 
     log::info!(
         "Listener bound to {}/udp and connected to {}/udp",
