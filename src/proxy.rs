@@ -55,10 +55,10 @@ const UDP_TIMEOUT: u64 = 30;
 const UDP_TIMEOUT_STREAM: u64 = 120;
 
 pub struct UdpProxy {
-    listener: Arc<tokio::net::UdpSocket>,
+    listener: tokio::net::UdpSocket,
     local_address: SocketAddr,
     remote_address: SocketAddr,
-    conntrack_table: Arc<Mutex<ConnTrackMap>>,
+    conntrack_table: Mutex<ConnTrackMap>,
     packet_transformer: Box<dyn crate::filters::Transform + Send + Sync>,
 }
 
@@ -68,20 +68,19 @@ impl UdpProxy {
         remote_address: SocketAddr,
         packet_transformer: Box<dyn crate::filters::Transform + Send + Sync>,
     ) -> anyhow::Result<Self> {
-        let listener = Arc::new(
-            tokio::net::UdpSocket::bind(local_address)
-                .await
-                .with_context(|| {
-                    format!("Failed to bind listening socket to address {local_address}")
-                })?,
-        );
+        let listener = tokio::net::UdpSocket::bind(local_address)
+            .await
+            .with_context(|| {
+                format!("Failed to bind listening socket to address {local_address}")
+            })?;
+        let local_address = listener
+            .local_addr()
+            .context("Failed to get local_addr from listener")?;
         return Ok(Self {
-            listener: listener.clone(),
-            local_address: listener
-                .local_addr()
-                .context("Failed to get local_addr from listener")?,
+            listener,
+            local_address,
             remote_address,
-            conntrack_table: Arc::new(Mutex::new(ConnTrackMap::default())),
+            conntrack_table: Mutex::new(ConnTrackMap::default()),
             packet_transformer,
         });
     }
