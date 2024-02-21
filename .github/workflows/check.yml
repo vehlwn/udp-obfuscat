@@ -8,12 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: archlinux:latest
 
     steps:
-      - name: Install dependencies
-        run: pacman -Suy --noconfirm --needed rust
-
       - name: Checkout the code
         uses: actions/checkout@v4
 
