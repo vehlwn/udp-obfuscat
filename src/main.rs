@@ -1,49 +1,62 @@
 mod common;
+mod config;
 mod filters;
 mod proxy;
 
 use anyhow::Context;
 
-/// udp-obfuscat client and server
-#[derive(Debug, clap::Parser)]
-#[clap(version, about, long_about = None)]
-struct Args {
-    /// Disable timestamps in log messages. By default they are enabled
-    #[clap(short, long, env)]
-    disable_timestamps: bool,
-
-    /// Where to bind listening client UDP socket
-    #[clap(short, long, env)]
-    local_address: std::net::SocketAddr,
-
-    /// Address of an udp-obfuscat server in client mode or UDP upstream in server mode
-    #[clap(short, long, env)]
-    remote_address: std::net::SocketAddr,
-
-    /// Base64-encoded key for a Xor filter
-    #[clap(short, long, env)]
-    xor_key: String,
+fn drop_root(user: nix::unistd::User) -> anyhow::Result<()> {
+    log::debug!(
+        "Dropping root privileges to UID {}, GID {}",
+        user.uid,
+        user.gid
+    );
+    nix::unistd::setgroups(&[]).context("setgroups failed")?;
+    nix::unistd::setgid(user.gid).context("setgid failed")?;
+    nix::unistd::setuid(user.uid).context("setuid failed")?;
+    Ok(())
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    use clap::Parser;
-    let args = Args::parse();
+    use config::parse_config;
 
+    let config = parse_config().context("Failed to parse config")?;
     let mut log_builder = env_logger::builder();
-    if args.disable_timestamps {
+    if config.disable_timestamps {
         log_builder.format_timestamp(None);
     }
+    if let Some(ref s) = config.log_level {
+        log_builder.filter_level(
+            s.parse()
+                .with_context(|| format!("{s} is not a valid log_level"))?,
+        );
+    }
     log_builder.init();
+    log::debug!("{config:?}");
+
+    if let Some(user) = config.user {
+        let context = || format!("Failed to get user info for user '{user}'");
+        let user = nix::unistd::User::from_name(&user)
+            .with_context(context)?
+            .with_context(context)?;
+        if nix::unistd::Uid::effective().is_root() && !user.uid.is_root() {
+            drop_root(user).context("drop_root failed")?;
+        }
+    }
 
     use base64::prelude::*;
     let xor_key = BASE64_STANDARD
-        .decode(args.xor_key.as_bytes())
+        .decode(config.xor_key.as_bytes())
         .context("Failed to convert xor_key from base64")?;
     let filter = crate::filters::Xor::with_key(xor_key);
     let udp_proxy = std::sync::Arc::new(
-        crate::proxy::UdpProxy::new(args.local_address, args.remote_address, Box::new(filter))
-            .await?,
+        crate::proxy::UdpProxy::new(
+            config.local_address,
+            config.remote_address,
+            Box::new(filter),
+        )
+        .await?,
     );
 
     log::info!(

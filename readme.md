@@ -5,22 +5,31 @@ This is an UDP proxy with a simple xor cipher obfuscation in Rust.
 ## Help
 
 ```bash
-Usage: udp-obfuscat [OPTIONS] --local-address <LOCAL_ADDRESS> --remote-address <REMOTE_ADDRESS> --xor-key <XOR_KEY>
+Usage: udp-obfuscat [OPTIONS]
 
 Options:
-  -d, --disable-timestamps
-          Disable timestamps in log messages. By default they are enabled [env: DISABLE_TIMESTAMPS=]
-  -l, --local-address <LOCAL_ADDRESS>
-          Where to bind listening client UDP socket [env: LOCAL_ADDRESS=]
-  -r, --remote-address <REMOTE_ADDRESS>
-          Address of an udp-obfuscat server in client mode or UDP upstream in server mode [env: REMOTE_ADDRESS=]
-  -x, --xor-key <XOR_KEY>
-          Base64-encoded key for a Xor filter [env: XOR_KEY=]
+  -c, --config-path <config_path>
+          Alternative toml config file
+      --disable-timestamps
+          Disable timestamps in log messages. By default they are enabled
+  -l, --local-address <local_address>
+          Where to bind listening client UDP socket
+  -r, --remote-address <remote_address>
+          Address of an udp-obfuscat server in client mode or UDP upstream in server mode
+      --xor-key <xor_key>
+          Base64-encoded key for a Xor filter
   -h, --help
           Print help
   -V, --version
           Print version
 ```
+
+Options in command line override the same options from a file. Additional toml options:
+
+- user - string, switch to this user when running as root to drop privileges;
+- log_level - string, log level for env_logger. Takes same values as
+  log::LevelFilter
+  [enum](https://docs.rs/log/0.4.20/log/enum.LevelFilter.html).
 
 ## Examples
 

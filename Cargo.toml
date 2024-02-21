@@ -1,6 +1,6 @@
 [package]
 name = "udp-obfuscat"
-version = "1.0.0"
+version = "2.0.0"
 description = "UDP proxy with obfuscation"
 license = "ISC"
 edition = "2021"
@@ -14,8 +14,11 @@ strip = true
 [dependencies]
 anyhow = "1.0.79"
 base64 = "0.21.7"
-clap  = { version = "4.5.0", features = ["derive", "env"] }
+clap  = { version = "4.5.0", features = ["cargo"] }
 env_logger = "0.11.1"
 log = "0.4.20"
+nix = { version = "0.27.1", features = ["user"] }
 scopeguard = "1.2.0"
+serde = { version = "1.0.196", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+toml = "0.8.10"

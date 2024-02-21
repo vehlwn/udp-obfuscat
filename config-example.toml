@@ -1,0 +1,6 @@
+user = "udp-obfuscat"
+log_level = "debug"
+disable_timestamps = true
+local_address = "127.0.0.1:5050"
+remote_address = "127.0.0.1:6060"
+xor_key = "mAnZIczfaD1Z7NFFLZ3qFw=="
