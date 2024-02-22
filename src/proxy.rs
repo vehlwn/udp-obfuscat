@@ -113,8 +113,13 @@ impl UdpProxy {
                     let recv_len = recv_result
                         .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
                     ct_value.inc_packets_out();
+
+                    let read_buf = &mut read_buf[..recv_len];
+                    // In client mode: decrypt from udp-obfuscat server and send to peer.
+                    // In server mode: encrypt from upstream and send to peer.
+                    self.packet_transformer.transform(read_buf);
                     self.listener
-                        .send_to(&read_buf[..recv_len], peer_addr)
+                        .send_to(read_buf, peer_addr)
                         .await
                         .context("listener.send_to failed")?;
                 }
@@ -175,6 +180,8 @@ impl UdpProxy {
             ct_value.inc_packets_in();
 
             let read_buf = &mut read_buf[..recv_len];
+            // In client mode: encrypt from peer and send to udp-obfuscat server.
+            // In server mode: decrypt from peer and send to upstream.
             self.packet_transformer.transform(read_buf);
             match ct_value.client_sock.send(read_buf).await {
                 Ok(send_len) => {
