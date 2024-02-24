@@ -1,58 +1,10 @@
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 
-struct ConntrackValue {
-    client_sock: tokio::net::UdpSocket,
-    num_packets_in: AtomicI32,
-    num_packets_out: AtomicI32,
-    has_data_in: tokio::sync::Notify,
-}
-impl ConntrackValue {
-    fn new(client_sock: tokio::net::UdpSocket) -> Self {
-        Self {
-            client_sock,
-            num_packets_in: AtomicI32::new(0),
-            num_packets_out: AtomicI32::new(0),
-            has_data_in: tokio::sync::Notify::new(),
-        }
-    }
-
-    fn inc_packets_in(&self) {
-        let old = self.num_packets_in.load(Ordering::Relaxed);
-        let new = old.saturating_add(1);
-        self.num_packets_in.store(new, Ordering::Relaxed);
-        self.has_data_in.notify_one();
-    }
-
-    fn inc_packets_out(&self) {
-        let old = self.num_packets_out.load(Ordering::Relaxed);
-        let new = old.saturating_add(1);
-        self.num_packets_out.store(new, Ordering::Relaxed);
-    }
-
-    fn get_num_packets_in(&self) -> i32 {
-        self.num_packets_in.load(Ordering::Relaxed)
-    }
-    fn get_num_packets_out(&self) -> i32 {
-        self.num_packets_out.load(Ordering::Relaxed)
-    }
-
-    fn is_assured(&self) -> bool {
-        let a = self.get_num_packets_in();
-        let b = self.get_num_packets_out();
-        let min = a.min(b);
-        let max = a.max(b);
-        min >= 1 && max >= 2
-    }
-}
-
-type ConnTrackMap = std::collections::HashMap<SocketAddr, Arc<ConntrackValue>>;
-
-const UDP_TIMEOUT: u64 = 30;
-const UDP_TIMEOUT_STREAM: u64 = 120;
+mod conntrack;
+use conntrack::{ConnTrackMap, ConntrackValue};
 
 pub struct UdpProxy {
     listener: tokio::net::UdpSocket,
@@ -103,13 +55,13 @@ impl UdpProxy {
             conntrack_lock.remove(&peer_addr);
         }
         let mut read_buf = crate::common::datagram_buffer();
-        let mut timeout = UDP_TIMEOUT;
+        let mut timeout = conntrack::UDP_TIMEOUT;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
                     break;
                 }
-                recv_result = ct_value.client_sock.recv(read_buf.as_mut()) => {
+                recv_result = ct_value.recv(read_buf.as_mut()) => {
                     let recv_len = recv_result
                         .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
                     ct_value.inc_packets_out();
@@ -125,7 +77,7 @@ impl UdpProxy {
                 }
                 _ = ct_value.has_data_in.notified() => {
                     if ct_value.is_assured() {
-                        timeout = UDP_TIMEOUT_STREAM;
+                        timeout = conntrack::UDP_TIMEOUT_STREAM;
                     }
                 }
             }
@@ -183,7 +135,7 @@ impl UdpProxy {
             // In client mode: encrypt from peer and send to udp-obfuscat server.
             // In server mode: decrypt from peer and send to upstream.
             self.packet_transformer.transform(read_buf);
-            match ct_value.client_sock.send(read_buf).await {
+            match ct_value.send(read_buf).await {
                 Ok(send_len) => {
                     if send_len != recv_len {
                         log::error!(
