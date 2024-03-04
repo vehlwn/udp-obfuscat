@@ -3,9 +3,35 @@ use std::net::SocketAddr;
 use anyhow::Context;
 
 #[derive(Debug)]
+pub enum LoggingBackend {
+    EnvLogger,
+    SystemdJournalLogger,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum LoggingBackendParseError {
+    #[error("No matches for LoggingBackend")]
+    InvalidValue,
+}
+
+impl std::str::FromStr for LoggingBackend {
+    type Err = LoggingBackendParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "EnvLogger" => Ok(LoggingBackend::EnvLogger),
+            "SystemdJournalLogger" => Ok(LoggingBackend::SystemdJournalLogger),
+            _ => Err(Self::Err::InvalidValue),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Config {
     pub user: Option<String>,
-    pub log_level: Option<String>,
+    pub log_level: Option<log::LevelFilter>,
+    pub logging_backend: LoggingBackend,
+
     pub disable_timestamps: bool,
     pub local_address: SocketAddr,
     pub remote_address: SocketAddr,
@@ -49,6 +75,8 @@ pub fn parse_config() -> anyhow::Result<Config> {
 
     let mut user = None;
     let mut log_level = None;
+    let mut logging_backend = LoggingBackend::EnvLogger;
+
     let mut disable_timestamps = cli.get_flag("disable_timestamps");
     let mut local_address = if cli.contains_id("local_address") {
         cli.get_one::<SocketAddr>("local_address")
@@ -75,7 +103,18 @@ pub fn parse_config() -> anyhow::Result<Config> {
             user = Some(v.as_str().context("user must be string")?.to_string())
         };
         if let Some(v) = toml.get("log_level") {
-            log_level = Some(v.as_str().context("log_level must be string")?.to_string())
+            let level_str = v.as_str().context("log_level must be string")?;
+            log_level = Some(
+                level_str
+                    .parse()
+                    .with_context(|| format!("Invalid value for log_level: '{level_str}'"))?,
+            );
+        };
+        if let Some(v) = toml.get("logging_backend") {
+            let tmp_str = v.as_str().context("logging_backend must be string")?;
+            logging_backend = tmp_str
+                .parse()
+                .with_context(|| format!("Invalid value for logging_backend: '{tmp_str}'"))?;
         };
         if let Some(v) = toml.get("disable_timestamps") {
             if !disable_timestamps {
@@ -115,6 +154,7 @@ pub fn parse_config() -> anyhow::Result<Config> {
     Ok(Config {
         user,
         log_level,
+        logging_backend,
         disable_timestamps,
         local_address,
         remote_address,

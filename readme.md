@@ -29,7 +29,9 @@ Options in command line override the same options from a file. Additional toml o
 - user - string, switch to this user when running as root to drop privileges;
 - log_level - string, log level for env_logger. Takes same values as
   log::LevelFilter
-  [enum](https://docs.rs/log/0.4.20/log/enum.LevelFilter.html).
+  [enum](https://docs.rs/log/0.4.20/log/enum.LevelFilter.html);
+- logging_backend - string, one of {EnvLogger, SystemdJournalLogger}. Specifies
+  logger implementation. Default is EnvLogger.
 
 ## Examples
 

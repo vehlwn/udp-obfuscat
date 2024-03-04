@@ -2,6 +2,7 @@ mod common;
 mod config;
 mod filters;
 mod proxy;
+mod init_logging;
 
 use anyhow::Context;
 
@@ -22,17 +23,7 @@ async fn main() -> anyhow::Result<()> {
     use config::parse_config;
 
     let config = parse_config().context("Failed to parse config")?;
-    let mut log_builder = env_logger::builder();
-    if config.disable_timestamps {
-        log_builder.format_timestamp(None);
-    }
-    if let Some(ref s) = config.log_level {
-        log_builder.filter_level(
-            s.parse()
-                .with_context(|| format!("{s} is not a valid log_level"))?,
-        );
-    }
-    log_builder.init();
+    init_logging::init_logging(&config)?;
     log::debug!("{config:?}");
 
     use base64::prelude::*;
