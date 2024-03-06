@@ -139,18 +139,15 @@ impl UdpProxy {
                 Ok(send_len) => {
                     if send_len != recv_len {
                         log::error!(
-                            "Cannot send entire datagram to {}: {} != {}",
+                            "Cannot send entire datagram to {}: {send_len} != {recv_len}",
                             self.remote_address,
-                            send_len,
-                            recv_len
                         );
                     }
                 }
                 Err(e) => {
                     log::error!(
-                        "Cannot send entire datagram to {}: {}",
+                        "Cannot send {recv_len} bytes datagram to {}: {e}",
                         self.remote_address,
-                        e
                     );
                 }
             }
