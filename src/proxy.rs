@@ -49,11 +49,6 @@ impl UdpProxy {
         ct_value: Arc<ConntrackValue>,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<()> {
-        scopeguard::defer! {
-            log::debug!("Removing conntrack key {peer_addr}");
-            let mut conntrack_lock = self.conntrack_table.lock().unwrap();
-            conntrack_lock.remove(&peer_addr);
-        }
         let mut read_buf = crate::common::datagram_buffer();
         let mut timeout = conntrack::UDP_TIMEOUT;
         loop {
@@ -110,6 +105,9 @@ impl UdpProxy {
                     if let Err(e) = self_.reply_loop(ct_value_, peer_addr).await {
                         log::error!("reply_loop failed: {e}");
                     }
+                    log::debug!("Removing conntrack key {peer_addr}");
+                    let mut conntrack_lock = self_.conntrack_table.lock().unwrap();
+                    conntrack_lock.remove(&peer_addr);
                 });
                 return Ok(ct_value);
             }

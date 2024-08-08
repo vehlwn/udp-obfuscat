@@ -1,8 +1,8 @@
 mod common;
 mod config;
 mod filters;
-mod proxy;
 mod init_logging;
+mod proxy;
 
 use anyhow::Context;
 

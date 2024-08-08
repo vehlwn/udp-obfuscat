@@ -1,11 +1,12 @@
 use anyhow::Context;
 
-use crate::config::{Config, LoggingBackend};
+use crate::config::Config;
 
 pub fn init_logging(config: &Config) -> anyhow::Result<()> {
-    match config.logging_backend {
-        LoggingBackend::EnvLogger => init_env_logger(&config),
-        LoggingBackend::SystemdJournalLogger => init_systemd_journal_logger(&config),
+    if config.journald {
+        return init_systemd_journal_logger(&config);
+    } else {
+        return init_env_logger(&config);
     }
 }
 

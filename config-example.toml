@@ -1,6 +1,6 @@
 user = "udp-obfuscat"
 log_level = "debug"
-logging_backend = "SystemdJournalLogger"
+journald = true
 disable_timestamps = true
 local_address = "127.0.0.1:5050"
 remote_address = "127.0.0.1:6060"
