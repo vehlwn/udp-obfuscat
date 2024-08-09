@@ -6,7 +6,7 @@ use anyhow::Context;
 mod conntrack;
 use conntrack::{ConnTrackMap, ConntrackValue};
 
-pub struct UdpProxy {
+struct SharedState {
     listener: tokio::net::UdpSocket,
     local_address: SocketAddr,
     remote_address: SocketAddr,
@@ -14,36 +14,7 @@ pub struct UdpProxy {
     packet_transformer: Box<crate::filters::IFilter>,
 }
 
-impl UdpProxy {
-    pub async fn new(
-        local_address: SocketAddr,
-        remote_address: SocketAddr,
-        packet_transformer: Box<crate::filters::IFilter>,
-    ) -> anyhow::Result<Self> {
-        let listener = tokio::net::UdpSocket::bind(local_address)
-            .await
-            .with_context(|| {
-                format!("Failed to bind listening socket to address {local_address}")
-            })?;
-        let local_address = listener
-            .local_addr()
-            .context("Failed to get local_addr from listener")?;
-        return Ok(Self {
-            listener,
-            local_address,
-            remote_address,
-            conntrack_table: Mutex::new(ConnTrackMap::default()),
-            packet_transformer,
-        });
-    }
-
-    pub fn get_local_address(&self) -> &SocketAddr {
-        &self.local_address
-    }
-    pub fn get_remote_address(&self) -> &SocketAddr {
-        &self.remote_address
-    }
-
+impl SharedState {
     async fn reply_loop(
         &self,
         ct_value: Arc<ConntrackValue>,
@@ -79,34 +50,71 @@ impl UdpProxy {
         }
         return Ok(());
     }
+}
+
+pub struct UdpProxy {
+    state: Arc<SharedState>,
+}
+
+impl UdpProxy {
+    pub async fn new(
+        local_address: SocketAddr,
+        remote_address: SocketAddr,
+        packet_transformer: Box<crate::filters::IFilter>,
+    ) -> anyhow::Result<Self> {
+        let listener = tokio::net::UdpSocket::bind(local_address)
+            .await
+            .with_context(|| {
+                format!("Failed to bind listening socket to address {local_address}")
+            })?;
+        let local_address = listener
+            .local_addr()
+            .context("Failed to get local_addr from listener")?;
+        return Ok(Self {
+            state: Arc::new(SharedState {
+                listener,
+                local_address,
+                remote_address,
+                conntrack_table: Mutex::new(ConnTrackMap::default()),
+                packet_transformer,
+            }),
+        });
+    }
+
+    pub fn get_local_address(&self) -> &SocketAddr {
+        &self.state.local_address
+    }
+    pub fn get_remote_address(&self) -> &SocketAddr {
+        &self.state.remote_address
+    }
 
     async fn get_or_insert_conntrack_entry(
-        self: &Arc<Self>,
+        &self,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<Arc<ConntrackValue>> {
-        let mut conntrack_lock = self.conntrack_table.lock().unwrap();
+        let mut conntrack_lock = self.state.conntrack_table.lock().unwrap();
         use std::collections::hash_map::Entry;
         match conntrack_lock.entry(peer_addr) {
             Entry::Vacant(v) => {
-                let client_sock = connect_udp_socket(self.remote_address)
+                let client_sock = connect_udp_socket(self.state.remote_address)
                     .await
                     .context("Failed to create client UDP socket")?;
                 let ct_value = Arc::new(ConntrackValue::new(client_sock));
 
                 log::debug!(
                     "Creating conntrack key {peer_addr} -> {}",
-                    self.remote_address
+                    self.state.remote_address
                 );
                 v.insert(Arc::clone(&ct_value));
 
                 let ct_value_ = Arc::clone(&ct_value);
-                let self_ = Arc::clone(&self);
+                let state = Arc::clone(&self.state);
                 tokio::spawn(async move {
-                    if let Err(e) = self_.reply_loop(ct_value_, peer_addr).await {
+                    if let Err(e) = state.reply_loop(ct_value_, peer_addr).await {
                         log::error!("reply_loop failed: {e}");
                     }
                     log::debug!("Removing conntrack key {peer_addr}");
-                    let mut conntrack_lock = self_.conntrack_table.lock().unwrap();
+                    let mut conntrack_lock = state.conntrack_table.lock().unwrap();
                     conntrack_lock.remove(&peer_addr);
                 });
                 return Ok(ct_value);
@@ -117,10 +125,11 @@ impl UdpProxy {
         }
     }
 
-    pub async fn run(self: Arc<Self>) -> anyhow::Result<()> {
+    pub async fn run(&self) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
         loop {
             let (recv_len, peer_addr) = self
+                .state
                 .listener
                 .recv_from(read_buf.as_mut())
                 .await
@@ -132,20 +141,20 @@ impl UdpProxy {
             let read_buf = &mut read_buf[..recv_len];
             // In client mode: encrypt from peer and send to udp-obfuscat server.
             // In server mode: decrypt from peer and send to upstream.
-            self.packet_transformer.transform(read_buf);
+            self.state.packet_transformer.transform(read_buf);
             match ct_value.send(read_buf).await {
                 Ok(send_len) => {
                     if send_len != recv_len {
                         log::error!(
                             "Cannot send entire datagram to {}: {send_len} != {recv_len}",
-                            self.remote_address,
+                            self.state.remote_address,
                         );
                     }
                 }
                 Err(e) => {
                     log::error!(
                         "Cannot send {recv_len} bytes datagram to {}: {e}",
-                        self.remote_address,
+                        self.state.remote_address,
                     );
                 }
             }
