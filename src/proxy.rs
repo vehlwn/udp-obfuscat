@@ -11,14 +11,14 @@ pub struct UdpProxy {
     local_address: SocketAddr,
     remote_address: SocketAddr,
     conntrack_table: Mutex<ConnTrackMap>,
-    packet_transformer: Box<dyn crate::filters::Transform + Send + Sync>,
+    packet_transformer: Box<crate::filters::IFilter>,
 }
 
 impl UdpProxy {
     pub async fn new(
         local_address: SocketAddr,
         remote_address: SocketAddr,
-        packet_transformer: Box<dyn crate::filters::Transform + Send + Sync>,
+        packet_transformer: Box<crate::filters::IFilter>,
     ) -> anyhow::Result<Self> {
         let listener = tokio::net::UdpSocket::bind(local_address)
             .await

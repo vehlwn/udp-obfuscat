@@ -22,6 +22,10 @@ pub struct Cli {
     #[arg(long)]
     xor_key: Option<String>,
 
+    /// Apply filter to only first head_len bytes of each packet
+    #[arg(long)]
+    head_len: Option<usize>,
+
     /// Disable timestamps in log messages
     #[arg(long)]
     disable_timestamps: bool,
@@ -36,6 +40,7 @@ pub struct Config {
     pub local_address: SocketAddr,
     pub remote_address: SocketAddr,
     pub xor_key: String,
+    pub head_len: Option<usize>,
 }
 
 fn apply_cli_opts(config: &mut Config, cli: &Cli) {
@@ -47,6 +52,9 @@ fn apply_cli_opts(config: &mut Config, cli: &Cli) {
     }
     if let Some(ref xor_key) = cli.xor_key {
         config.xor_key = xor_key.clone();
+    }
+    if let Some(n) = cli.head_len {
+        config.head_len = Some(n);
     }
     if cli.disable_timestamps {
         config.disable_timestamps = true;
@@ -73,5 +81,6 @@ pub fn parse_config() -> anyhow::Result<Config> {
         local_address: cli.local_address.context("local_address is not set")?,
         remote_address: cli.remote_address.context("remote_address is not set")?,
         xor_key: cli.xor_key.context("xor_key is not set")?,
+        head_len: cli.head_len
     });
 }

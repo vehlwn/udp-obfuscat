@@ -18,6 +18,19 @@ fn drop_root(user: nix::unistd::User) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn make_filter(config: &crate::config::Config) -> anyhow::Result<Box<crate::filters::IFilter>> {
+    use base64::prelude::*;
+    let xor_key = BASE64_STANDARD
+        .decode(config.xor_key.as_bytes())
+        .context("Failed to convert xor_key from base64")?;
+
+    let mut ret: Box<crate::filters::IFilter> = Box::new(crate::filters::Xor::with_key(xor_key));
+    if let Some(n) = config.head_len {
+        ret = Box::new(crate::filters::Head::new(ret, n));
+    }
+    return Ok(ret);
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use config::parse_config;
@@ -26,18 +39,9 @@ async fn main() -> anyhow::Result<()> {
     init_logging::init_logging(&config)?;
     log::debug!("{config:?}");
 
-    use base64::prelude::*;
-    let xor_key = BASE64_STANDARD
-        .decode(config.xor_key.as_bytes())
-        .context("Failed to convert xor_key from base64")?;
-    let filter = crate::filters::Xor::with_key(xor_key);
+    let filter = make_filter(&config)?;
     let udp_proxy = std::sync::Arc::new(
-        crate::proxy::UdpProxy::new(
-            config.local_address,
-            config.remote_address,
-            Box::new(filter),
-        )
-        .await?,
+        crate::proxy::UdpProxy::new(config.local_address, config.remote_address, filter).await?,
     );
 
     if let Some(user) = config.user {
