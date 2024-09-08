@@ -1,6 +1,6 @@
 [package]
 name = "udp-obfuscat"
-version = "2.3.0"
+version = "2.3.1"
 description = "UDP proxy with obfuscation"
 license = "ISC"
 edition = "2021"
