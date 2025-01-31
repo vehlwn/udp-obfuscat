@@ -2,7 +2,7 @@
 name = "udp-obfuscat"
 version = "2.3.1"
 description = "UDP proxy with obfuscation"
-license = "ISC"
+license = "MIT"
 edition = "2021"
 publish = false
 
