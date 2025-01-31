@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 
-mod conntrack;
-use conntrack::{ConnTrackMap, ConntrackValue};
+type ConnTrackMap = HashMap<SocketAddr, Arc<tokio::net::UdpSocket>>;
+
+const CONNTRACK_TIMEOUT: u64 = 120;
 
 struct SharedState {
     listener: tokio::net::UdpSocket,
@@ -17,36 +19,30 @@ struct SharedState {
 impl SharedState {
     async fn reply_loop(
         &self,
-        ct_value: Arc<ConntrackValue>,
+        proxy_conn: Arc<tokio::net::UdpSocket>,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
-        let mut timeout = conntrack::UDP_TIMEOUT;
         loop {
-            tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(timeout)) => {
-                    break;
-                }
-                recv_result = ct_value.recv(read_buf.as_mut()) => {
-                    let recv_len = recv_result
-                        .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
-                    ct_value.inc_packets_out();
+            let recv_len = match tokio::time::timeout(
+                std::time::Duration::from_secs(CONNTRACK_TIMEOUT),
+                proxy_conn.recv(read_buf.as_mut()),
+            )
+            .await
+            {
+                Ok(recv_result) => recv_result
+                    .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?,
+                Err(_) => break,
+            };
 
-                    let read_buf = &mut read_buf[..recv_len];
-                    // In client mode: decrypt from udp-obfuscat server and send to peer.
-                    // In server mode: encrypt from upstream and send to peer.
-                    self.packet_transformer.transform(read_buf);
-                    self.listener
-                        .send_to(read_buf, peer_addr)
-                        .await
-                        .context("listener.send_to failed")?;
-                }
-                _ = ct_value.has_data_in.notified() => {
-                    if ct_value.is_assured() {
-                        timeout = conntrack::UDP_TIMEOUT_STREAM;
-                    }
-                }
-            }
+            let read_buf = &mut read_buf[..recv_len];
+            // In client mode: decrypt from udp-obfuscat server and send to peer.
+            // In server mode: encrypt from upstream and send to peer.
+            self.packet_transformer.transform(read_buf);
+            self.listener
+                .send_to(read_buf, peer_addr)
+                .await
+                .context("listener.send_to failed")?;
         }
         return Ok(());
     }
@@ -91,7 +87,7 @@ impl UdpProxy {
     async fn get_or_insert_conntrack_entry(
         &self,
         peer_addr: SocketAddr,
-    ) -> anyhow::Result<Arc<ConntrackValue>> {
+    ) -> anyhow::Result<Arc<tokio::net::UdpSocket>> {
         let mut conntrack_lock = self.state.conntrack_table.lock().unwrap();
         use std::collections::hash_map::Entry;
         match conntrack_lock.entry(peer_addr) {
@@ -99,7 +95,7 @@ impl UdpProxy {
                 let client_sock = connect_udp_socket(self.state.remote_address)
                     .await
                     .context("Failed to create client UDP socket")?;
-                let ct_value = Arc::new(ConntrackValue::new(client_sock));
+                let ct_value = Arc::new(client_sock);
 
                 log::debug!(
                     "Creating conntrack key {peer_addr} -> {}",
@@ -136,7 +132,6 @@ impl UdpProxy {
                 .context("listener.recv_from failed")?;
 
             let ct_value = self.get_or_insert_conntrack_entry(peer_addr).await?;
-            ct_value.inc_packets_in();
 
             let read_buf = &mut read_buf[..recv_len];
             // In client mode: encrypt from peer and send to udp-obfuscat server.
