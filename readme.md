@@ -8,18 +8,20 @@ This is an UDP proxy with a simple xor cipher obfuscation in Rust.
 Usage: udp-obfuscat [OPTIONS]
 
 Options:
-  -c, --config-path <config_path>
-          Alternative toml config file
-      --disable-timestamps
-          Disable timestamps in log messages. By default they are enabled
-  -l, --local-address <local_address>
-          Where to bind listening client UDP socket
-  -r, --remote-address <remote_address>
+  -c, --config-file <FILE>
+          Sets a custom config file
+  -l, --local-address <LOCAL_ADDRESS>
+          Where to bind listening client or server UDP socket
+  -r, --remote-address <REMOTE_ADDRESS>
           Address of an udp-obfuscat server in client mode or UDP upstream in server mode
-      --xor-key <xor_key>
+      --xor-key <XOR_KEY>
           Base64-encoded key for a Xor filter
+      --head-len <HEAD_LEN>
+          Apply filter to only first head_len bytes of each packet
+      --disable-timestamps
+          Disable timestamps in log messages
   -h, --help
-          Print help
+          Print help (see more with '--help')
   -V, --version
           Print version
 ```
@@ -30,8 +32,7 @@ Options in command line override the same options from a file. Additional toml o
 - log_level - string, log level for env_logger. Takes same values as
   log::LevelFilter
   [enum](https://docs.rs/log/0.4.20/log/enum.LevelFilter.html);
-- logging_backend - string, one of {EnvLogger, SystemdJournalLogger}. Specifies
-  logger implementation. Default is EnvLogger.
+- journald - bool, use systemd-journal instead of env_logger.
 
 ## Examples
 
