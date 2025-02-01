@@ -4,7 +4,20 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 
-type ConnTrackMap = HashMap<SocketAddr, Arc<tokio::net::UdpSocket>>;
+struct ConntrackValue {
+    sock: tokio::net::UdpSocket,
+    has_data_in: tokio::sync::Notify,
+}
+impl ConntrackValue {
+    fn new(sock: tokio::net::UdpSocket) -> Self {
+        Self {
+            sock,
+            has_data_in: tokio::sync::Notify::new(),
+        }
+    }
+}
+
+type ConnTrackMap = HashMap<SocketAddr, Arc<ConntrackValue>>;
 
 const CONNTRACK_TIMEOUT: u64 = 120;
 
@@ -19,30 +32,33 @@ struct SharedState {
 impl SharedState {
     async fn reply_loop(
         &self,
-        proxy_conn: Arc<tokio::net::UdpSocket>,
+        ct_value: Arc<ConntrackValue>,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
         loop {
-            let recv_len = match tokio::time::timeout(
-                std::time::Duration::from_secs(CONNTRACK_TIMEOUT),
-                proxy_conn.recv(read_buf.as_mut()),
-            )
-            .await
-            {
-                Ok(recv_result) => recv_result
-                    .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?,
-                Err(_) => break,
-            };
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(CONNTRACK_TIMEOUT)) => {
+                    break;
+                }
+                recv_result = ct_value.sock.recv(read_buf.as_mut()) => {
+                    let recv_len = recv_result
+                        .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
 
-            let read_buf = &mut read_buf[..recv_len];
-            // In client mode: decrypt from udp-obfuscat server and send to peer.
-            // In server mode: encrypt from upstream and send to peer.
-            self.packet_transformer.transform(read_buf);
-            self.listener
-                .send_to(read_buf, peer_addr)
-                .await
-                .context("listener.send_to failed")?;
+                    let read_buf = &mut read_buf[..recv_len];
+                    // In client mode: decrypt from udp-obfuscat server and send to peer.
+                    // In server mode: encrypt from upstream and send to peer.
+                    self.packet_transformer.transform(read_buf);
+                    self.listener
+                        .send_to(read_buf, peer_addr)
+                        .await
+                        .context("listener.send_to failed")?;
+                }
+                _ = ct_value.has_data_in.notified() => {
+                    // Update timeout and continue
+                    continue;
+                }
+            }
         }
         return Ok(());
     }
@@ -87,7 +103,7 @@ impl UdpProxy {
     async fn get_or_insert_conntrack_entry(
         &self,
         peer_addr: SocketAddr,
-    ) -> anyhow::Result<Arc<tokio::net::UdpSocket>> {
+    ) -> anyhow::Result<Arc<ConntrackValue>> {
         let mut conntrack_lock = self.state.conntrack_table.lock().unwrap();
         use std::collections::hash_map::Entry;
         match conntrack_lock.entry(peer_addr) {
@@ -95,7 +111,7 @@ impl UdpProxy {
                 let client_sock = connect_udp_socket(self.state.remote_address)
                     .await
                     .context("Failed to create client UDP socket")?;
-                let ct_value = Arc::new(client_sock);
+                let ct_value = Arc::new(ConntrackValue::new(client_sock));
 
                 log::debug!(
                     "Creating conntrack key {peer_addr} -> {}",
@@ -132,12 +148,13 @@ impl UdpProxy {
                 .context("listener.recv_from failed")?;
 
             let ct_value = self.get_or_insert_conntrack_entry(peer_addr).await?;
+            ct_value.has_data_in.notify_one();
 
             let read_buf = &mut read_buf[..recv_len];
             // In client mode: encrypt from peer and send to udp-obfuscat server.
             // In server mode: decrypt from peer and send to upstream.
             self.state.packet_transformer.transform(read_buf);
-            match ct_value.send(read_buf).await {
+            match ct_value.sock.send(read_buf).await {
                 Ok(send_len) => {
                     if send_len != recv_len {
                         log::error!(
