@@ -6,6 +6,8 @@ mod proxy;
 
 use anyhow::Context;
 
+use std::sync::Arc;
+
 fn drop_root(user: nix::unistd::User) -> anyhow::Result<()> {
     log::debug!(
         "Dropping root privileges to UID {}, GID {}",
@@ -40,8 +42,9 @@ async fn main() -> anyhow::Result<()> {
     log::debug!("{config:?}");
 
     let filter = make_filter(&config)?;
-    let udp_proxy =
-        crate::proxy::UdpProxy::new(config.local_address, config.remote_address, filter).await?;
+    let udp_proxy = Arc::new(
+        crate::proxy::UdpProxy::new(config.local_address, config.remote_address, filter).await?,
+    );
 
     if let Some(user) = config.user {
         let context = || format!("Failed to get user info for user '{user}'");
