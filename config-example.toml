@@ -1,8 +1,21 @@
+[general]
 user = "udp-obfuscat"
+
+[listener]
+address = ["localhost:5050"]
+ipv4_only = false
+ipv6_only = false
+
+[remote]
+address = "localhost:6060"
+ipv4_only = false
+ipv6_only = false
+
+[logging]
 log_level = "debug"
-journald = true
-disable_timestamps = true
-local_address = "127.0.0.1:5050"
-remote_address = "127.0.0.1:6060"
+journald = false
+disable_timestamps = false
+
+[filters]
 xor_key = "mAnZIczfaD1Z7NFFLZ3qFw=="
 head_len = 4

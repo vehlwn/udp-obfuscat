@@ -1,85 +1,95 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Context;
 
-struct ConntrackValue {
-    sock: tokio::net::UdpSocket,
-    has_data_in: tokio::sync::Notify,
-}
-impl ConntrackValue {
-    fn new(sock: tokio::net::UdpSocket) -> Self {
-        Self {
-            sock,
-            has_data_in: tokio::sync::Notify::new(),
-        }
-    }
-}
-
-type ConnTrackMap = HashMap<SocketAddr, Arc<ConntrackValue>>;
-
-const CONNTRACK_TIMEOUT: u64 = 120;
+use crate::{conntrack as ct, dns};
 
 pub struct UdpProxy {
-    listener: tokio::net::UdpSocket,
-    local_address: SocketAddr,
-    remote_address: SocketAddr,
-    conntrack_table: tokio::sync::Mutex<ConnTrackMap>,
+    listeners: Vec<tokio::net::UdpSocket>,
+    local_addresses: Vec<SocketAddr>,
+    remote_addresses: Vec<SocketAddr>,
+    conntrack_table: tokio::sync::Mutex<ct::ConnTrackMap>,
     packet_transformer: Box<crate::filters::IFilter>,
 }
 
 impl UdpProxy {
     pub async fn new(
-        local_address: SocketAddr,
-        remote_address: SocketAddr,
+        listener_config: &crate::config::ListenerOptions,
+        remote_config: &crate::config::RemoteOptions,
         packet_transformer: Box<crate::filters::IFilter>,
     ) -> anyhow::Result<Self> {
-        let listener = tokio::net::UdpSocket::bind(local_address)
-            .await
-            .with_context(|| {
-                format!("Failed to bind listening socket to address {local_address}")
-            })?;
-        let local_address = listener
-            .local_addr()
-            .context("Failed to get local_addr from listener")?;
+        let local_addrs = dns::resolve_and_filter_ips(
+            &listener_config.address,
+            listener_config.ipv4_only,
+            listener_config.ipv6_only,
+        )
+        .await?;
+
+        if local_addrs.is_empty() {
+            anyhow::bail!("No listen address available");
+        }
+
+        let mut listeners = Vec::new();
+        let mut local_addresses = Vec::new();
+        for addr in local_addrs {
+            let listener = tokio::net::UdpSocket::bind(addr)
+                .await
+                .with_context(|| format!("Failed to bind listening socket to '{addr}'"))?;
+            let local_address = listener.local_addr().context("UdpSocket::local_addr")?;
+            listeners.push(listener);
+            local_addresses.push(local_address);
+        }
+        if listeners.is_empty() {
+            anyhow::bail!("Cannot bind UDP socket");
+        }
+
+        let remote_addresses = dns::resolve_and_filter_ips(
+            &vec![remote_config.address.clone()],
+            remote_config.ipv4_only,
+            remote_config.ipv6_only,
+        )
+        .await?;
+
         return Ok(Self {
-            listener,
-            local_address,
-            remote_address,
-            conntrack_table: tokio::sync::Mutex::new(ConnTrackMap::default()),
+            listeners,
+            local_addresses,
+            remote_addresses,
+            conntrack_table: Default::default(),
             packet_transformer,
         });
     }
 
-    pub fn get_local_address(&self) -> &SocketAddr {
-        &self.local_address
+    pub fn get_local_address(&self) -> &[SocketAddr] {
+        return &self.local_addresses;
     }
-    pub fn get_remote_address(&self) -> &SocketAddr {
-        &self.remote_address
+    pub fn get_remote_address(&self) -> &[SocketAddr] {
+        return &self.remote_addresses;
     }
 
+    /// Read from upstream and send back to peer through listening socket
     async fn reply_loop(
         &self,
-        ct_value: Arc<ConntrackValue>,
-        peer_addr: SocketAddr,
+        ct_key: ct::ConntrackKey,
+        ct_value: Arc<ct::ConntrackValue>,
     ) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
         loop {
             tokio::select! {
-                _ = tokio::time::sleep(std::time::Duration::from_secs(CONNTRACK_TIMEOUT)) => {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(ct::CONNTRACK_TIMEOUT)) => {
                     break;
                 }
                 recv_result = ct_value.sock.recv(read_buf.as_mut()) => {
                     let recv_len = recv_result
-                        .with_context(|| format!("proxy_conn.recv failed for peer {peer_addr}"))?;
+                        .with_context(|| format!("ct_value.sock.recv failed from peer {}",
+                                ct_value.sock.peer_addr().unwrap()))?;
 
                     let read_buf = &mut read_buf[..recv_len];
                     // In client mode: decrypt from udp-obfuscat server and send to peer.
                     // In server mode: encrypt from upstream and send to peer.
                     self.packet_transformer.transform(read_buf);
-                    self.listener
-                        .send_to(read_buf, peer_addr)
+                    self.listeners[ct_key.listener_id]
+                        .send_to(read_buf, ct_key.peer_addr)
                         .await
                         .context("listener.send_to failed")?;
                 }
@@ -93,32 +103,33 @@ impl UdpProxy {
     }
     async fn get_or_insert_conntrack_entry(
         self: &Arc<Self>,
-        peer_addr: SocketAddr,
-    ) -> anyhow::Result<Arc<ConntrackValue>> {
+        key: ct::ConntrackKey,
+    ) -> anyhow::Result<Arc<ct::ConntrackValue>> {
         let mut conntrack_lock = self.conntrack_table.lock().await;
         use std::collections::hash_map::Entry;
-        match conntrack_lock.entry(peer_addr) {
+        match conntrack_lock.entry(key) {
             Entry::Vacant(v) => {
-                let client_sock = connect_udp_socket(self.remote_address)
+                let client_sock = connect_udp_socket(&self.remote_addresses)
                     .await
                     .context("Failed to create client UDP socket")?;
-                let ct_value = Arc::new(ConntrackValue::new(client_sock));
+                let ct_value = Arc::new(ct::ConntrackValue::new(client_sock));
 
                 log::debug!(
-                    "Creating conntrack key {peer_addr} -> {}",
-                    self.remote_address
+                    "Creating conntrack key {} -> {}",
+                    key.peer_addr,
+                    ct_value.sock.peer_addr().unwrap()
                 );
                 v.insert(Arc::clone(&ct_value));
 
                 let ct_value_ = Arc::clone(&ct_value);
                 let self_ = Arc::clone(self);
                 tokio::spawn(async move {
-                    if let Err(e) = self_.reply_loop(ct_value_, peer_addr).await {
+                    if let Err(e) = self_.reply_loop(key, ct_value_).await {
                         log::error!("reply_loop failed: {e}");
                     }
-                    log::debug!("Removing conntrack key {peer_addr}");
+                    log::debug!("Removing conntrack key {}", key.peer_addr);
                     let mut conntrack_lock = self_.conntrack_table.lock().await;
-                    conntrack_lock.remove(&peer_addr);
+                    conntrack_lock.remove(&key);
                 });
                 return Ok(ct_value);
             }
@@ -129,15 +140,28 @@ impl UdpProxy {
     }
 
     pub async fn run(self: &Arc<Self>) -> anyhow::Result<()> {
+        let mut listen_tasks = Vec::new();
+        for i in 0..self.listeners.len() {
+            let self_ = Arc::clone(&self);
+            listen_tasks.push(tokio::spawn(async move { self_.listen_loop(i).await }));
+        }
+        let (res, _, _) = futures::future::select_all(listen_tasks).await;
+        return res.unwrap();
+    }
+    async fn listen_loop(self: &Arc<Self>, listener_id: usize) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
         loop {
-            let (recv_len, peer_addr) = self
-                .listener
+            let (recv_len, peer_addr) = self.listeners[listener_id]
                 .recv_from(read_buf.as_mut())
                 .await
                 .context("listener.recv_from failed")?;
 
-            let ct_value = self.get_or_insert_conntrack_entry(peer_addr).await?;
+            let ct_value = self
+                .get_or_insert_conntrack_entry(ct::ConntrackKey {
+                    peer_addr,
+                    listener_id,
+                })
+                .await?;
             ct_value.has_data_in.notify_one();
 
             let read_buf = &mut read_buf[..recv_len];
@@ -149,14 +173,14 @@ impl UdpProxy {
                     if send_len != recv_len {
                         log::error!(
                             "Cannot send entire datagram to {}: {send_len} != {recv_len}",
-                            self.remote_address,
+                            ct_value.sock.peer_addr().unwrap(),
                         );
                     }
                 }
                 Err(e) => {
                     log::error!(
                         "Cannot send {recv_len} bytes datagram to {}: {e}",
-                        self.remote_address,
+                        ct_value.sock.peer_addr().unwrap(),
                     );
                 }
             }
@@ -166,117 +190,40 @@ impl UdpProxy {
 
 fn get_unspec_sock_addr(base: &SocketAddr) -> SocketAddr {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    match base {
+    return match base {
         SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         SocketAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-    }
+    };
 }
 
-async fn connect_udp_socket(remote_address: SocketAddr) -> anyhow::Result<tokio::net::UdpSocket> {
-    let local_address = get_unspec_sock_addr(&remote_address);
-    let ret = tokio::net::UdpSocket::bind(local_address)
-        .await
-        .with_context(|| format!("Failed to bind UDP socket to address {local_address:?}"))?;
-    ret.connect(remote_address)
-        .await
-        .with_context(|| format!("Failed to connect UDP socket to address {remote_address}"))?;
-    return Ok(ret);
+async fn connect_udp_socket(
+    remote_address: &Vec<SocketAddr>,
+) -> anyhow::Result<tokio::net::UdpSocket> {
+    let mut last_err = None;
+    for remote_address in remote_address {
+        let local_address = get_unspec_sock_addr(&remote_address);
+        let ret = match tokio::net::UdpSocket::bind(local_address).await {
+            Ok(ok) => ok,
+            Err(e) => {
+                last_err = Some(
+                    anyhow::Error::new(e)
+                        .context(format!("Failed to bind UDP socket to '{local_address}'")),
+                );
+                continue;
+            }
+        };
+        match ret.connect(remote_address).await {
+            Ok(_) => return Ok(ret),
+            Err(e) => {
+                last_err = Some(anyhow::Error::new(e).context(format!(
+                    "Failed to connect UDP socket to '{remote_address}'"
+                )));
+                continue;
+            }
+        }
+    }
+    return Err(last_err.unwrap_or(anyhow::Error::msg("Cannot resolve to any address")));
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-    use crate::filters::{Head, IFilter, Xor};
-
-    #[tokio::test]
-    async fn proxy_transforms() {
-        let proxy_addr = "127.0.0.1:6060".parse().unwrap();
-        let upstream_addr = "127.0.0.1:7070".parse().unwrap();
-        let filter: Box<IFilter> = Box::new(Head::new(Box::new(Xor::with_key(vec![3])), 3));
-        let proxy = Arc::new(
-            UdpProxy::new(proxy_addr, upstream_addr, filter)
-                .await
-                .unwrap(),
-        );
-        let upstream_task = async move {
-            let listener = tokio::net::UdpSocket::bind(upstream_addr).await.unwrap();
-            let mut read_buf = crate::common::datagram_buffer();
-            let (recv_len, _) = listener.recv_from(read_buf.as_mut()).await.unwrap();
-            let data = &read_buf[..recv_len];
-            // Server xored only the first 3 bytes: (3 ^ 7) == 4.
-            assert_eq!(data, [4, 4, 4, 7, 7, 7, 7, 7]);
-        };
-        let proxy_task = async move {
-            proxy.run().await.unwrap();
-        };
-
-        let client_sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        client_sock.connect(proxy_addr).await.unwrap();
-        client_sock.send(&[7_u8; 8]).await.unwrap();
-        tokio::select! {
-            _ = upstream_task => {}
-            _ = proxy_task => {}
-        }
-    }
-    #[tokio::test]
-    async fn proxy_proxies() {
-        let proxy_client_addr = "127.0.0.1:6061".parse().unwrap();
-        let proxy_server_addr = "127.0.0.1:6071".parse().unwrap();
-        let upstream_addr = "127.0.0.1:7071".parse().unwrap();
-
-        let key_data = vec![3];
-        let filter_client: Box<IFilter> =
-            Box::new(Head::new(Box::new(Xor::with_key(key_data.clone())), 3));
-        let filter_server: Box<IFilter> =
-            Box::new(Head::new(Box::new(Xor::with_key(key_data.clone())), 3));
-
-        let proxy_client = Arc::new(
-            UdpProxy::new(proxy_client_addr, proxy_server_addr, filter_client)
-                .await
-                .unwrap(),
-        );
-        let proxy_server = Arc::new(
-            UdpProxy::new(proxy_server_addr, upstream_addr, filter_server)
-                .await
-                .unwrap(),
-        );
-
-        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
-        let upstream_task = async move {
-            let listener = tokio::net::UdpSocket::bind(upstream_addr).await.unwrap();
-            let mut read_buf = crate::common::datagram_buffer();
-            let (recv_len, peer) = listener.recv_from(read_buf.as_mut()).await.unwrap();
-            let data = &read_buf[..recv_len];
-            assert_eq!(data, b"hello from client");
-            listener
-                .send_to(b"hello from upstream", peer)
-                .await
-                .unwrap();
-            // Must wait until client finishes
-            done_rx.await.unwrap();
-        };
-        let proxy_client_task = async move {
-            proxy_client.run().await.unwrap();
-        };
-        let proxy_server_task = async move {
-            proxy_server.run().await.unwrap();
-        };
-
-        let client_task = async move {
-            let client_sock = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            client_sock.connect(proxy_client_addr).await.unwrap();
-            client_sock.send(b"hello from client").await.unwrap();
-            let mut read_buf = crate::common::datagram_buffer();
-            let n = client_sock.recv(read_buf.as_mut()).await.unwrap();
-            assert_eq!(&read_buf[..n], b"hello from upstream");
-            done_tx.send(()).unwrap();
-        };
-
-        tokio::select! {
-            _ = upstream_task => {}
-            _ = proxy_client_task => {}
-            _ = proxy_server_task => {}
-            _ = client_task => {}
-        }
-    }
-}
+mod proxy_test;

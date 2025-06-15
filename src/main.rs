@@ -3,6 +3,8 @@ mod config;
 mod filters;
 mod init_logging;
 mod proxy;
+mod conntrack;
+mod dns;
 
 use anyhow::Context;
 
@@ -20,7 +22,9 @@ fn drop_root(user: nix::unistd::User) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn make_filter(config: &crate::config::Config) -> anyhow::Result<Box<crate::filters::IFilter>> {
+fn make_filter(
+    config: &crate::config::FilterOptions,
+) -> anyhow::Result<Box<crate::filters::IFilter>> {
     use base64::prelude::*;
     let xor_key = BASE64_STANDARD
         .decode(config.xor_key.as_bytes())
@@ -38,15 +42,14 @@ async fn main() -> anyhow::Result<()> {
     use config::parse_config;
 
     let config = parse_config().context("Failed to parse config")?;
-    init_logging::init_logging(&config)?;
+    init_logging::init_logging(&config.logging)?;
     log::debug!("{config:?}");
 
-    let filter = make_filter(&config)?;
-    let udp_proxy = Arc::new(
-        crate::proxy::UdpProxy::new(config.local_address, config.remote_address, filter).await?,
-    );
+    let filter = make_filter(&config.filters)?;
+    let udp_proxy =
+        Arc::new(crate::proxy::UdpProxy::new(&config.listener, &config.remote, filter).await?);
 
-    if let Some(user) = config.user {
+    if let Some(user) = config.general.user {
         let context = || format!("Failed to get user info for user '{user}'");
         let user = nix::unistd::User::from_name(&user)
             .with_context(context)?
@@ -57,7 +60,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     log::info!(
-        "Listener bound to {}/udp and connected to {}/udp",
+        "Listener bound to {:?}/udp and connected to {:?}/udp",
         udp_proxy.get_local_address(),
         udp_proxy.get_remote_address()
     );

@@ -1,86 +1,106 @@
-use std::net::SocketAddr;
-
 use anyhow::Context;
 
 /// UDP proxy with a simple xor cipher obfuscation
 #[derive(clap::Parser)]
 #[command(version, about, long_about)]
 pub struct Cli {
-    /// Sets a custom config file
+    /// Read options from a config file
     #[arg(short, long, value_name = "FILE")]
-    config_file: Option<String>,
+    config_file: String,
+}
 
-    /// Where to bind listening client or server UDP socket
-    #[arg(short, long)]
-    local_address: Option<SocketAddr>,
+#[derive(Debug, serde::Deserialize)]
+pub struct GeneralOptions {
+    /// Switch to this user when running as root after binding a socket to drop privileges
+    pub user: Option<String>,
+}
 
+#[derive(Debug, serde::Deserialize)]
+pub struct ListenerOptions {
+    /// Array of hosts and ports where to bind listening client or server UDP socket. Can be either
+    /// ip address or domain name (127.0.0.1:5000, [::]:5000 localhost:5000)
+    pub address: Vec<String>,
+
+    /// Resolve listening address to IPv4 only
+    #[serde(default = "default_listen_ipv4_only")]
+    pub ipv4_only: bool,
+
+    /// Resolve listening address to IPv6 only
+    #[serde(default = "default_listen_ipv6_only")]
+    pub ipv6_only: bool,
+}
+fn default_listen_ipv4_only() -> bool {
+    false
+}
+fn default_listen_ipv6_only() -> bool {
+    false
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct RemoteOptions {
     /// Address of an udp-obfuscat server in client mode or UDP upstream in server mode
-    #[arg(short, long)]
-    remote_address: Option<SocketAddr>,
+    pub address: String,
 
+    /// Resolve upstream address to IPv4 only
+    #[serde(default = "default_upstream_ipv4_only")]
+    pub ipv4_only: bool,
+
+    /// Resolve upstream address to IPv6 only
+    #[serde(default = "default_upstream_ipv6_only")]
+    pub ipv6_only: bool,
+}
+
+fn default_upstream_ipv4_only() -> bool {
+    false
+}
+fn default_upstream_ipv6_only() -> bool {
+    false
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct LoggingOptions {
+    /// Off, Error, Warn, Info, Debug, Trace,
+    pub log_level: Option<log::LevelFilter>,
+
+    /// use systemd-journal instead of env_logger
+    #[serde(default = "default_journald")]
+    pub journald: bool,
+
+    /// env_logger only: disable timestamps in log messages
+    #[serde(default = "default_disable_timestamps")]
+    pub disable_timestamps: bool,
+}
+fn default_journald() -> bool {
+    return false;
+}
+fn default_disable_timestamps() -> bool {
+    return false;
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct FilterOptions {
     /// Base64-encoded key for a Xor filter
-    #[arg(long)]
-    xor_key: Option<String>,
+    pub xor_key: String,
 
     /// Apply filter to only first head_len bytes of each packet
-    #[arg(long)]
-    head_len: Option<usize>,
-
-    /// Disable timestamps in log messages
-    #[arg(long)]
-    disable_timestamps: bool,
+    pub head_len: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
 pub struct Config {
-    pub user: Option<String>,
-    pub log_level: Option<log::LevelFilter>,
-    pub journald: bool,
-    pub disable_timestamps: bool,
-    pub local_address: SocketAddr,
-    pub remote_address: SocketAddr,
-    pub xor_key: String,
-    pub head_len: Option<usize>,
-}
-
-fn apply_cli_opts(config: &mut Config, cli: &Cli) {
-    if let Some(local_address) = cli.local_address {
-        config.local_address = local_address;
-    }
-    if let Some(remote_address) = cli.remote_address {
-        config.remote_address = remote_address;
-    }
-    if let Some(ref xor_key) = cli.xor_key {
-        config.xor_key = xor_key.clone();
-    }
-    if let Some(n) = cli.head_len {
-        config.head_len = Some(n);
-    }
-    if cli.disable_timestamps {
-        config.disable_timestamps = true;
-    }
+    pub general: GeneralOptions,
+    pub listener: ListenerOptions,
+    pub remote: RemoteOptions,
+    pub logging: LoggingOptions,
+    pub filters: FilterOptions,
 }
 
 pub fn parse_config() -> anyhow::Result<Config> {
     use clap::Parser;
-
     let cli = Cli::parse();
-    if let Some(ref config_path) = cli.config_file {
-        let content = std::fs::read_to_string(config_path)
-            .with_context(|| format!("Failed to read config file '{config_path}'"))?;
-        let mut toml_config: Config = toml::from_str(&content)
-            .with_context(|| format!("Failed to parse toml config from '{config_path}'"))?;
-        apply_cli_opts(&mut toml_config, &cli);
-        return Ok(toml_config);
-    }
-    return Ok(Config {
-        user: None,
-        log_level: None,
-        journald: false,
-        disable_timestamps: cli.disable_timestamps,
-        local_address: cli.local_address.context("local_address is not set")?,
-        remote_address: cli.remote_address.context("remote_address is not set")?,
-        xor_key: cli.xor_key.context("xor_key is not set")?,
-        head_len: cli.head_len
-    });
+    let content = std::fs::read_to_string(&cli.config_file)
+        .with_context(|| format!("Failed to read config file '{}'", cli.config_file))?;
+    let toml_config: Config = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse toml config from '{}'", cli.config_file))?;
+    return Ok(toml_config);
 }
