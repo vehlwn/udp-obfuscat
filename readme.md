@@ -15,7 +15,7 @@ Options:
 
 ## Config
 
-See [src/config.rs] for toml schema and definitions.
+See [config.rs](src/config.rs) for toml schema and definitions.
 
 ## Examples
 
