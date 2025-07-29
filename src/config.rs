@@ -9,7 +9,7 @@ pub struct Cli {
     config_file: String,
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct GeneralOptions {
     /// Switch to this user when running as root after binding a socket to drop privileges
     pub user: Option<String>,
@@ -57,24 +57,44 @@ fn default_upstream_ipv6_only() -> bool {
     false
 }
 
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Default, serde::Deserialize)]
 pub struct LoggingOptions {
     /// Off, Error, Warn, Info, Debug, Trace,
     pub log_level: Option<log::LevelFilter>,
 
     /// use systemd-journal instead of env_logger
-    #[serde(default = "default_journald")]
-    pub journald: bool,
+    #[serde(default)]
+    pub journald: JournaldOption,
 
     /// env_logger only: disable timestamps in log messages
-    #[serde(default = "default_disable_timestamps")]
-    pub disable_timestamps: bool,
+    #[serde(default)]
+    pub disable_timestamps: DisableTimestamps,
 }
-fn default_journald() -> bool {
-    return false;
+
+#[derive(Debug, Copy, Clone, serde::Deserialize)]
+pub struct JournaldOption(bool);
+impl Default for JournaldOption {
+    fn default() -> Self {
+        return Self(false);
+    }
 }
-fn default_disable_timestamps() -> bool {
-    return false;
+impl Into<bool> for JournaldOption {
+    fn into(self) -> bool {
+        self.0
+    }
+}
+
+#[derive(Debug, Copy, Clone, serde::Deserialize)]
+pub struct DisableTimestamps(bool);
+impl Default for DisableTimestamps {
+    fn default() -> Self {
+        return Self(true);
+    }
+}
+impl Into<bool> for DisableTimestamps {
+    fn into(self) -> bool {
+        self.0
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -88,9 +108,11 @@ pub struct FilterOptions {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub general: GeneralOptions,
     pub listener: ListenerOptions,
     pub remote: RemoteOptions,
+    #[serde(default)]
     pub logging: LoggingOptions,
     pub filters: FilterOptions,
 }

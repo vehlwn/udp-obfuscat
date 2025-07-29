@@ -3,7 +3,7 @@ use anyhow::Context;
 use crate::config::LoggingOptions;
 
 pub fn init_logging(config: &LoggingOptions) -> anyhow::Result<()> {
-    if config.journald {
+    if config.journald.into() {
         return init_systemd_journal_logger(&config);
     } else {
         return init_env_logger(&config);
@@ -12,7 +12,7 @@ pub fn init_logging(config: &LoggingOptions) -> anyhow::Result<()> {
 
 fn init_env_logger(config: &LoggingOptions) -> anyhow::Result<()> {
     let mut log_builder = env_logger::builder();
-    if config.disable_timestamps {
+    if config.disable_timestamps.into() {
         log_builder.format_timestamp(None);
     }
     if let Some(log_level) = config.log_level {

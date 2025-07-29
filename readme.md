@@ -5,34 +5,17 @@ This is an UDP proxy with a simple xor cipher obfuscation in Rust.
 ## Help
 
 ```bash
-Usage: udp-obfuscat [OPTIONS]
+Usage: udp-obfuscat --config-file <FILE>
 
 Options:
-  -c, --config-file <FILE>
-          Sets a custom config file
-  -l, --local-address <LOCAL_ADDRESS>
-          Where to bind listening client or server UDP socket
-  -r, --remote-address <REMOTE_ADDRESS>
-          Address of an udp-obfuscat server in client mode or UDP upstream in server mode
-      --xor-key <XOR_KEY>
-          Base64-encoded key for a Xor filter
-      --head-len <HEAD_LEN>
-          Apply filter to only first head_len bytes of each packet
-      --disable-timestamps
-          Disable timestamps in log messages
-  -h, --help
-          Print help (see more with '--help')
-  -V, --version
-          Print version
+  -c, --config-file <FILE>  Read options from a config file
+  -h, --help                Print help (see more with '--help')
+  -V, --version             Print version
 ```
 
-Options in command line override the same options from a file. Additional toml options:
+## Config
 
-- user - string, switch to this user when running as root to drop privileges;
-- log_level - string, log level for env_logger. Takes same values as
-  log::LevelFilter
-  [enum](https://docs.rs/log/0.4.20/log/enum.LevelFilter.html);
-- journald - bool, use systemd-journal instead of env_logger.
+See src/config.rs for toml schema and definitions.
 
 ## Examples
 
@@ -45,16 +28,32 @@ openssl rand -base64 16
 ### Client
 
 ```bash
-$ RUST_LOG=trace cargo run -- -l 127.0.0.1:5050 -r 192.0.2.1:5050 --xor-key aaaa
+$ RUST_LOG=trace cargo run -- -c <(cat << EOF
+[listener]
+address = ["localhost:5050"]
+[remote]
+address = "192.0.2.1:5050"
+[filters]
+xor_key = "aaaa"
+EOF
+)
 ```
 
 ### Server
 
 ```bash
-$ RUST_LOG=trace cargo run -- -l 192.0.2.1:5050 -r 127.0.0.1:6060 --xor-key aaaa
+$ RUST_LOG=trace cargo run -- -c <(cat << EOF
+[listener]
+address = ["192.0.2.1:5050"]
+[remote]
+address = "127.0.0.1:6060"
+[filters]
+xor_key = "aaaa"
+EOF
+)
 ```
 
-Now on a client side packets sent to 127.0.0.1:5050 will be forwarded to
-127.0.0.1:6060 on a server side.
+Now on a client side packets sent to 127.0.0.1:5050 or [::1]:5050 will be
+forwarded to 127.0.0.1:6060 on a server side.
 
 ![Diagram](diagram.png)
