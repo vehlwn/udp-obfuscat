@@ -670,7 +670,7 @@ checksum = "28391a4201ba7eb1984cfeb6862c0b3ea2cfe23332298967c749dddc0d6cd976"
 
 [[package]]
 name = "udp-obfuscat"
-version = "2.3.2"
+version = "2.3.3"
 dependencies = [
  "anyhow",
  "base64",
