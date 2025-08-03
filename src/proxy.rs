@@ -125,7 +125,7 @@ impl UdpProxy {
                 let self_ = Arc::clone(self);
                 tokio::spawn(async move {
                     if let Err(e) = self_.reply_loop(key, ct_value_).await {
-                        log::error!("reply_loop failed: {e}");
+                        log::error!("reply_loop failed: {e:?}");
                     }
                     log::debug!("Removing conntrack key {}", key.peer_addr);
                     let mut conntrack_lock = self_.conntrack_table.lock().await;
@@ -179,7 +179,7 @@ impl UdpProxy {
                 }
                 Err(e) => {
                     log::error!(
-                        "Cannot send {recv_len} bytes datagram to {}: {e}",
+                        "Cannot send {recv_len} bytes datagram to {}: {e:?}",
                         ct_value.sock.peer_addr().unwrap(),
                     );
                 }
