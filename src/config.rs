@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use anyhow::Context;
 
 /// UDP proxy with a simple xor cipher obfuscation
@@ -35,7 +37,6 @@ pub struct RemoteOptions {
     #[serde(flatten)]
     pub resolve_options: crate::dns::ResolveOptions,
 }
-
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct LoggingOptions {
@@ -100,8 +101,14 @@ pub struct Config {
 pub fn parse_config() -> anyhow::Result<Config> {
     use clap::Parser;
     let cli = Cli::parse();
-    let content = std::fs::read_to_string(&cli.config_file)
+    let mut file = std::fs::File::open(&cli.config_file)
+        .with_context(|| format!("Failed to open config file '{}'", cli.config_file))?;
+    let mut buf = [0_u8; 1000];
+    let n = file
+        .read(buf.as_mut_slice())
         .with_context(|| format!("Failed to read config file '{}'", cli.config_file))?;
+    let content = str::from_utf8(&buf[..n])
+        .with_context(|| format!("Cannot convert file '{}' to utf8", cli.config_file))?;
     let toml_config: Config = toml::from_str(&content)
         .with_context(|| format!("Failed to parse toml config from '{}'", cli.config_file))?;
     return Ok(toml_config);
