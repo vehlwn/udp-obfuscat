@@ -13,13 +13,11 @@ async fn proxy_transforms() {
         UdpProxy::new(
             &ListenerOptions {
                 address: vec![proxy_addr.to_string()],
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             filter,
         )
@@ -63,13 +61,11 @@ async fn proxy_proxies() {
         UdpProxy::new(
             &ListenerOptions {
                 address: vec![proxy_client_addr.to_string()],
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             &RemoteOptions {
                 address: proxy_server_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             filter_client,
         )
@@ -80,13 +76,11 @@ async fn proxy_proxies() {
         UdpProxy::new(
             &ListenerOptions {
                 address: vec![proxy_server_addr.to_string()],
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             filter_server,
         )
@@ -145,13 +139,14 @@ async fn local_address_ipv4() {
         UdpProxy::new(
             &ListenerOptions {
                 address: proxy_addr,
-                ipv4_only: true,
-                ipv6_only: false,
+                resolve_options: dns::ResolveOptions {
+                    ipv4_only: true,
+                    ..Default::default()
+                },
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             filter,
         )
@@ -176,13 +171,14 @@ async fn local_address_ipv6() {
         UdpProxy::new(
             &ListenerOptions {
                 address: proxy_addr,
-                ipv4_only: false,
-                ipv6_only: true,
+                resolve_options: dns::ResolveOptions {
+                    ipv6_only: true,
+                    ..Default::default()
+                },
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             filter,
         )
@@ -201,13 +197,14 @@ async fn remote_address_ipv4() {
         UdpProxy::new(
             &ListenerOptions {
                 address: proxy_addr,
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: true,
-                ipv6_only: false,
+                resolve_options: dns::ResolveOptions {
+                    ipv4_only: true,
+                    ..Default::default()
+                },
             },
             filter,
         )
@@ -229,13 +226,14 @@ async fn remote_address_ipv6() {
         UdpProxy::new(
             &ListenerOptions {
                 address: proxy_addr,
-                ipv4_only: false,
-                ipv6_only: false,
+                resolve_options: Default::default(),
             },
             &RemoteOptions {
                 address: upstream_addr.to_string(),
-                ipv4_only: false,
-                ipv6_only: true,
+                resolve_options: dns::ResolveOptions {
+                    ipv6_only: true,
+                    ..Default::default()
+                },
             },
             filter,
         )

@@ -21,19 +21,9 @@ pub struct ListenerOptions {
     /// ip address or domain name (127.0.0.1:5000, [::]:5000 localhost:5000)
     pub address: Vec<String>,
 
-    /// Resolve listening address to IPv4 only
-    #[serde(default = "default_listen_ipv4_only")]
-    pub ipv4_only: bool,
-
-    /// Resolve listening address to IPv6 only
-    #[serde(default = "default_listen_ipv6_only")]
-    pub ipv6_only: bool,
-}
-fn default_listen_ipv4_only() -> bool {
-    false
-}
-fn default_listen_ipv6_only() -> bool {
-    false
+    /// How to resolve listening address: IPv4 or IPv6 only
+    #[serde(flatten)]
+    pub resolve_options: crate::dns::ResolveOptions,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -41,21 +31,11 @@ pub struct RemoteOptions {
     /// Address of an udp-obfuscat server in client mode or UDP upstream in server mode
     pub address: String,
 
-    /// Resolve upstream address to IPv4 only
-    #[serde(default = "default_upstream_ipv4_only")]
-    pub ipv4_only: bool,
-
-    /// Resolve upstream address to IPv6 only
-    #[serde(default = "default_upstream_ipv6_only")]
-    pub ipv6_only: bool,
+    /// How to resolve upstream address: IPv4 or IPv6 only
+    #[serde(flatten)]
+    pub resolve_options: crate::dns::ResolveOptions,
 }
 
-fn default_upstream_ipv4_only() -> bool {
-    false
-}
-fn default_upstream_ipv6_only() -> bool {
-    false
-}
 
 #[derive(Debug, Default, serde::Deserialize)]
 pub struct LoggingOptions {
