@@ -21,8 +21,9 @@ impl UdpProxy {
     ) -> anyhow::Result<Self> {
         let local_addrs = dns::resolve_and_filter_ips(
             &listener_config.address,
-            listener_config.ipv4_only,
-            listener_config.ipv6_only,
+            dns::ResolveOptions::default()
+                .set_ipv4_only(listener_config.ipv4_only)
+                .set_ipv6_only(listener_config.ipv6_only),
         )
         .await?;
 
@@ -46,8 +47,9 @@ impl UdpProxy {
 
         let remote_addresses = dns::resolve_and_filter_ips(
             &vec![remote_config.address.clone()],
-            remote_config.ipv4_only,
-            remote_config.ipv6_only,
+            dns::ResolveOptions::default()
+                .set_ipv4_only(remote_config.ipv4_only)
+                .set_ipv6_only(remote_config.ipv6_only),
         )
         .await?;
 
