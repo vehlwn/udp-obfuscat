@@ -113,3 +113,49 @@ pub fn parse_config() -> anyhow::Result<Config> {
         .with_context(|| format!("Failed to parse toml config from '{}'", cli.config_file))?;
     return Ok(toml_config);
 }
+
+#[cfg(test)]
+mod test_config {
+    #[test]
+    fn minimal() {
+        let content = r#"
+[listener]
+address = ["localhost:5050"]
+
+[remote]
+address = "localhost:6060"
+
+[filters]
+xor_key = "aaaa"
+        "#;
+        toml::from_str::<super::Config>(&content).unwrap();
+    }
+
+    #[test]
+    fn maximal() {
+        let content = r#"
+[general]
+user = "udp-obfuscat"
+
+[listener]
+address = ["localhost:5050"]
+ipv4_only = false
+ipv6_only = false
+
+[remote]
+address = "localhost:6060"
+ipv4_only = true
+ipv6_only = false
+
+[logging]
+log_level = "debug"
+journald = false
+disable_timestamps = false
+
+[filters]
+xor_key = "bbbb"
+head_len = 3
+        "#;
+        toml::from_str::<super::Config>(&content).unwrap();
+    }
+}
