@@ -1,10 +1,10 @@
 mod common;
 mod config;
+mod conntrack;
+mod dns;
 mod filters;
 mod init_logging;
 mod proxy;
-mod conntrack;
-mod dns;
 
 use anyhow::Context;
 
@@ -34,7 +34,7 @@ fn make_filter(
     if let Some(n) = config.head_len {
         ret = Box::new(crate::filters::Head::new(ret, n));
     }
-    return Ok(ret);
+    Ok(ret)
 }
 
 #[tokio::main]

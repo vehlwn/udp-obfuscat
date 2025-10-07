@@ -39,7 +39,7 @@ pub async fn resolve_and_filter_ips(
             );
         }
     }
-    return Ok(ret);
+    Ok(ret)
 }
 
 #[cfg(test)]

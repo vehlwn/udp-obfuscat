@@ -56,11 +56,11 @@ pub struct LoggingOptions {
 pub struct JournaldOption(bool);
 impl Default for JournaldOption {
     fn default() -> Self {
-        return Self(false);
+        Self(false)
     }
 }
-impl Into<bool> for JournaldOption {
-    fn into(self) -> bool {
+impl JournaldOption {
+    pub fn get(&self) -> bool {
         self.0
     }
 }
@@ -69,11 +69,11 @@ impl Into<bool> for JournaldOption {
 pub struct DisableTimestamps(bool);
 impl Default for DisableTimestamps {
     fn default() -> Self {
-        return Self(true);
+        Self(true)
     }
 }
-impl Into<bool> for DisableTimestamps {
-    fn into(self) -> bool {
+impl DisableTimestamps {
+    pub fn get(self) -> bool {
         self.0
     }
 }
@@ -109,9 +109,9 @@ pub fn parse_config() -> anyhow::Result<Config> {
         .with_context(|| format!("Failed to read config file '{}'", cli.config_file))?;
     let content = str::from_utf8(&buf[..n])
         .with_context(|| format!("Cannot convert file '{}' to utf8", cli.config_file))?;
-    let toml_config: Config = toml::from_str(&content)
+    let toml_config: Config = toml::from_str(content)
         .with_context(|| format!("Failed to parse toml config from '{}'", cli.config_file))?;
-    return Ok(toml_config);
+    Ok(toml_config)
 }
 
 #[cfg(test)]
@@ -128,7 +128,7 @@ address = "localhost:6060"
 [filters]
 xor_key = "aaaa"
         "#;
-        toml::from_str::<super::Config>(&content).unwrap();
+        toml::from_str::<super::Config>(content).unwrap();
     }
 
     #[test]
@@ -156,6 +156,6 @@ disable_timestamps = false
 xor_key = "bbbb"
 head_len = 3
         "#;
-        toml::from_str::<super::Config>(&content).unwrap();
+        toml::from_str::<super::Config>(content).unwrap();
     }
 }

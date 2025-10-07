@@ -47,20 +47,20 @@ impl UdpProxy {
         )
         .await?;
 
-        return Ok(Self {
+        Ok(Self {
             listeners,
             local_addresses,
             remote_addresses,
             conntrack_table: Default::default(),
             packet_transformer,
-        });
+        })
     }
 
     pub fn get_local_address(&self) -> &[SocketAddr] {
-        return &self.local_addresses;
+        &self.local_addresses
     }
     pub fn get_remote_address(&self) -> &[SocketAddr] {
-        return &self.remote_addresses;
+        &self.remote_addresses
     }
 
     /// Read from upstream and send back to peer through listening socket
@@ -95,7 +95,7 @@ impl UdpProxy {
                 }
             }
         }
-        return Ok(());
+        Ok(())
     }
     async fn get_or_insert_conntrack_entry(
         self: &Arc<Self>,
@@ -127,22 +127,20 @@ impl UdpProxy {
                     let mut conntrack_lock = self_.conntrack_table.lock().await;
                     conntrack_lock.remove(&key);
                 });
-                return Ok(ct_value);
+                Ok(ct_value)
             }
-            Entry::Occupied(o) => {
-                return Ok(o.get().clone());
-            }
+            Entry::Occupied(o) => Ok(o.get().clone()),
         }
     }
 
     pub async fn run(self: &Arc<Self>) -> anyhow::Result<()> {
         let mut listen_tasks = Vec::new();
         for i in 0..self.listeners.len() {
-            let self_ = Arc::clone(&self);
+            let self_ = Arc::clone(self);
             listen_tasks.push(tokio::spawn(async move { self_.listen_loop(i).await }));
         }
         let (res, _, _) = futures::future::select_all(listen_tasks).await;
-        return res.unwrap();
+        res.unwrap()
     }
     async fn listen_loop(self: &Arc<Self>, listener_id: usize) -> anyhow::Result<()> {
         let mut read_buf = crate::common::datagram_buffer();
@@ -186,10 +184,10 @@ impl UdpProxy {
 
 fn get_unspec_sock_addr(base: &SocketAddr) -> SocketAddr {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-    return match base {
+    match base {
         SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
         SocketAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-    };
+    }
 }
 
 async fn connect_udp_socket(
@@ -218,7 +216,7 @@ async fn connect_udp_socket(
             }
         }
     }
-    return Err(last_err.unwrap_or(anyhow::Error::msg("Cannot resolve to any address")));
+    Err(last_err.unwrap_or(anyhow::Error::msg("Cannot resolve to any address")))
 }
 
 #[cfg(test)]
