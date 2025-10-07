@@ -52,13 +52,8 @@ pub struct LoggingOptions {
     pub disable_timestamps: DisableTimestamps,
 }
 
-#[derive(Debug, Copy, Clone, serde::Deserialize)]
+#[derive(Default, Debug, Copy, Clone, serde::Deserialize)]
 pub struct JournaldOption(bool);
-impl Default for JournaldOption {
-    fn default() -> Self {
-        Self(false)
-    }
-}
 impl JournaldOption {
     pub fn get(&self) -> bool {
         self.0

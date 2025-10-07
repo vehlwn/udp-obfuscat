@@ -195,7 +195,7 @@ async fn connect_udp_socket(
 ) -> anyhow::Result<tokio::net::UdpSocket> {
     let mut last_err = None;
     for remote_address in remote_address {
-        let local_address = get_unspec_sock_addr(&remote_address);
+        let local_address = get_unspec_sock_addr(remote_address);
         let ret = match tokio::net::UdpSocket::bind(local_address).await {
             Ok(ok) => ok,
             Err(e) => {
